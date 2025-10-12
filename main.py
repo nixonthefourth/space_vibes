@@ -7,8 +7,12 @@ pygame.init()
 # --- Constants ---
 WIDTH, HEIGHT = 800, 600
 BLACK, WHITE = (0, 0, 0), (255, 255, 255)
-SPEED = 1
+SPEED = 20.0        # units per second
 CAM_DISTANCE = 20
+MAX_YAW = 0.25      # max visual yaw per press
+BANK_AMOUNT = 0.8   # visual bank amount
+TURN_SPEED = 3.0    # how fast visual tilt occurs
+HEADING_SPEED = 1.5 # how fast actual heading rotates
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 clock = pygame.time.Clock()
@@ -17,30 +21,21 @@ clock = pygame.time.Clock()
 # --- Math ---
 def rotation_matrix_x(angle):
     c, s = np.cos(angle), np.sin(angle)
-    return np.array([
-        [1, 0, 0],
-        [0, c, -s],
-        [0, s, c]
-    ])
+    return np.array([[1, 0, 0],[0, c, -s],[0, s, c]])
 
 
 def rotation_matrix_y(angle):
     c, s = np.cos(angle), np.sin(angle)
-    return np.array([
-        [c, 0, s],
-        [0, 1, 0],
-        [-s, 0, c]
-    ])
+    return np.array([[c,0,s],[0,1,0],[-s,0,c]])
 
 
 def project(points):
-    """3D → 2D perspective projection"""
-    z = points[:, 2] + CAM_DISTANCE
+    z = points[:,2] + CAM_DISTANCE
     z = np.where(z <= 0.01, 0.01, z)
     factor = 5 / z
-    x_proj = points[:, 0] * factor * WIDTH / 2 + WIDTH / 2
-    y_proj = -points[:, 1] * factor * HEIGHT / 2 + HEIGHT / 2
-    return np.column_stack((x_proj, y_proj)).astype(int)
+    x_proj = points[:,0] * factor * WIDTH/2 + WIDTH/2
+    y_proj = -points[:,1] * factor * HEIGHT/2 + HEIGHT/2
+    return np.column_stack((x_proj,y_proj)).astype(int)
 
 
 # --- Ship ---
@@ -55,89 +50,88 @@ class Ship:
             [1.0, 0.2, -2.0],
         ])
         self.edges = [
-            (0,1), (0,2), (1,2),
-            (3,4), (3,5), (4,5),
-            (0,3), (1,4), (2,5),
-            (1,5), (2,4)
+            (0,1),(0,2),(1,2),
+            (3,4),(3,5),(4,5),
+            (0,3),(1,4),(2,5),
+            (1,5),(2,4)
         ]
 
     def draw(self, surface, angle_x, yaw, bank):
-        # Rotation matrices
         rot_x = rotation_matrix_x(angle_x)
         rot_y = rotation_matrix_y(yaw)
         rotation = rot_y @ rot_x
-
-        # Apply rotation
         rotated = self.vertices @ rotation.T
-        # Apply bank offset visually
-        rotated[:, 0] += bank
-
+        rotated[:,0] += bank
         verts_2d = project(rotated)
-        for a, b in self.edges:
-            pygame.draw.line(surface, WHITE, verts_2d[a], verts_2d[b], 1)
+        for a,b in self.edges:
+            pygame.draw.line(surface, WHITE, verts_2d[a], verts_2d[b],1)
 
 
 # --- Scene ---
 class Scene:
     def __init__(self):
         self.ship = Ship()
-        self.angle_x = -0.2      # fixed downward look
-        self.yaw = 0.0           # momentary yaw for cinematic turn
-        self.pos = np.array([0.0, 0.0, 0.0])
-        # Spread over a big 3D space
-        self.stars = np.random.rand(1000, 3) * [1000, 600, 1000] - [500, 300, 0]
+        self.angle_x = -0.2
+        self.rotation_yaw = 0.0   # actual heading
+        self.forward = np.array([0,0,1.0])
+        self.pos = np.array([0.0,0.0,0.0])
+        self.stars = np.random.rand(2000,3)*[1000,600,1000]-[500,300,0]
 
-        # Turning animation
-        self.turn_target = 0.0
         self.turn_value = 0.0
-        self.turn_speed = 5.0
-        self.turn_angle = 0.25   # visual yaw when turning
-        self.bank_amount = 0.8   # lateral visual offset
+        self.turn_target = 0.0
+        self.bank_amount = BANK_AMOUNT
 
     def handle_input(self, event):
-        """Trigger on key press/release"""
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_d:
-                self.turn_target = -1
-            elif event.key == pygame.K_a:
-                self.turn_target = 1
+            if event.key == pygame.K_a:
+                self.turn_target = -MAX_YAW
+            elif event.key == pygame.K_d:
+                self.turn_target = MAX_YAW
         elif event.type == pygame.KEYUP:
             if event.key in (pygame.K_a, pygame.K_d):
-                self.turn_target = 0
+                self.turn_target = 0.0
 
     def update(self, dt, keys):
-        # Smooth turn animation
-        alpha = 1 - math.exp(-self.turn_speed * dt)
-        self.turn_value += (self.turn_target - self.turn_value) * alpha
+        # Smoothly update visual tilt
+        diff = self.turn_target - self.turn_value
+        self.turn_value += diff * min(1.0, TURN_SPEED*dt)
 
-        # Forward/backward movement in world space (ignoring visual turn)
-        forward = np.array([0.0, 0.0, 1.0])  # always along Z
+        # Update actual heading gradually only when tilting
+        if abs(self.turn_value) > 0.001:
+            heading_change = (self.turn_value/MAX_YAW)*HEADING_SPEED*dt
+            self.rotation_yaw += heading_change
+
+        # Forward/backward movement along current heading
+        move_input = 0.0
         if keys[pygame.K_w]:
-            self.pos += forward * SPEED
+            move_input += 1.0
         if keys[pygame.K_s]:
-            self.pos -= forward * SPEED
+            move_input -= 1.0
+        self.pos += self.forward * SPEED * dt * move_input
 
-    def draw(self, surface):
-        for i in range(len(self.stars)):
-            if self.stars[i, 2] - self.pos[2] < -10:  # behind ship
-                self.stars[i, 2] += 1000  # move star forward
+        # Update forward vector
+        c,s = np.cos(self.rotation_yaw), np.sin(self.rotation_yaw)
+        self.forward = np.array([s,0,c])
 
-        total_yaw = self.turn_value * self.turn_angle
-        bank = self.turn_value * self.bank_amount
+    def draw(self,surface):
+        total_yaw = self.rotation_yaw + self.turn_value
+        bank = self.turn_value*self.bank_amount
 
-        # Stars relative to ship
+        # Stars
         rot_y = rotation_matrix_y(total_yaw)
         rot_x = rotation_matrix_x(self.angle_x)
         rotation = rot_x @ rot_y
-
         relative_stars = self.stars - self.pos
         rotated_stars = relative_stars @ rotation.T
         star_points = project(rotated_stars)
+        for x,y in star_points:
+            if 0<=x<WIDTH and 0<=y<HEIGHT:
+                surface.set_at((x,y),WHITE)
 
-        for s in star_points:
-            x, y = s
-            if 0 <= x < WIDTH and 0 <= y < HEIGHT:
-                surface.set_at((x, y), WHITE)
+        # Wrap stars
+        for i in range(len(self.stars)):
+            if self.stars[i,2]-self.pos[2]<-10:
+                self.stars[i,2]+=1000
 
         # Draw ship
         self.ship.draw(surface, self.angle_x, total_yaw, bank)
@@ -146,23 +140,22 @@ class Scene:
 # --- Main Loop ---
 scene = Scene()
 running = True
-last_time = pygame.time.get_ticks() / 1000.0
+last_time = pygame.time.get_ticks()/1000.0
 
 while running:
-    now = pygame.time.get_ticks() / 1000.0
+    now = pygame.time.get_ticks()/1000.0
     dt = now - last_time
     last_time = now
 
     screen.fill(BLACK)
 
     keys = pygame.key.get_pressed()
-
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
         scene.handle_input(event)
 
-    scene.update(dt, keys)
+    scene.update(dt,keys)
     scene.draw(screen)
 
     pygame.display.flip()
