@@ -7,12 +7,14 @@ pygame.init()
 # --- Constants ---
 WIDTH, HEIGHT = 800, 600
 BLACK, WHITE = (0, 0, 0), (255, 255, 255)
-SPEED = 20.0        # units per second
+SPEED = 30.0        # units per second
 CAM_DISTANCE = 20
-MAX_YAW = 0.25      # max visual yaw per press
-BANK_AMOUNT = 0.8   # visual bank amount
-TURN_SPEED = 3.0    # how fast visual tilt occurs
-HEADING_SPEED = 1.5 # how fast actual heading rotates
+MAX_YAW_VISUAL = 0.25      # max visual yaw per press
+BANK_AMOUNT = 0.8           # visual bank amount
+TURN_SPEED = 3.0            # speed of visual tilt
+HEADING_SPEED = 1.5         # speed of actual heading rotation
+MAX_ROTATION_LEFT = -0.5    # radians, absolute left limit
+MAX_ROTATION_RIGHT = 0.5    # radians, absolute right limit
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 clock = pygame.time.Clock()
@@ -77,16 +79,16 @@ class Scene:
         self.pos = np.array([0.0,0.0,0.0])
         self.stars = np.random.rand(2000,3)*[1000,600,1000]-[500,300,0]
 
-        self.turn_value = 0.0
-        self.turn_target = 0.0
+        self.turn_value = 0.0     # current visual tilt
+        self.turn_target = 0.0    # target visual tilt
         self.bank_amount = BANK_AMOUNT
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_a:
-                self.turn_target = -MAX_YAW
+                self.turn_target = -MAX_YAW_VISUAL
             elif event.key == pygame.K_d:
-                self.turn_target = MAX_YAW
+                self.turn_target = MAX_YAW_VISUAL
         elif event.type == pygame.KEYUP:
             if event.key in (pygame.K_a, pygame.K_d):
                 self.turn_target = 0.0
@@ -95,11 +97,15 @@ class Scene:
         # Smoothly update visual tilt
         diff = self.turn_target - self.turn_value
         self.turn_value += diff * min(1.0, TURN_SPEED*dt)
+        # Clamp visual tilt
+        self.turn_value = max(min(self.turn_value, MAX_ROTATION_RIGHT), MAX_ROTATION_LEFT)
 
-        # Update actual heading gradually only when tilting
+        # Update actual heading gradually based on tilt
         if abs(self.turn_value) > 0.001:
-            heading_change = (self.turn_value/MAX_YAW)*HEADING_SPEED*dt
+            heading_change = (self.turn_value/MAX_YAW_VISUAL)*HEADING_SPEED*dt
             self.rotation_yaw += heading_change
+            # Clamp actual heading
+            self.rotation_yaw = max(min(self.rotation_yaw, MAX_ROTATION_RIGHT), MAX_ROTATION_LEFT)
 
         # Forward/backward movement along current heading
         move_input = 0.0
