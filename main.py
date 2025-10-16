@@ -9,7 +9,7 @@ BLACK, WHITE = (0, 0, 0), (255, 255, 255)
 SPEED = 30.0        # units per second
 CAM_DISTANCE = 20
 MAX_YAW_VISUAL = 0.25      # max visual yaw per press
-BANK_AMOUNT = 0.8           # visual bank amount
+BANK_AMOUNT = 0.6           # visual bank amount
 TURN_SPEED = 3.0            # speed of visual tilt
 HEADING_SPEED = 1.5         # speed of actual heading rotation
 MAX_ROTATION_LEFT = -0.5    # radians, absolute left limit
@@ -84,12 +84,12 @@ class Scene:
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_a:
+            if event.key == pygame.K_q:
                 self.turn_target = -MAX_YAW_VISUAL
-            elif event.key == pygame.K_d:
+            elif event.key == pygame.K_e:
                 self.turn_target = MAX_YAW_VISUAL
         elif event.type == pygame.KEYUP:
-            if event.key in (pygame.K_a, pygame.K_d):
+            if event.key in (pygame.K_q, pygame.K_e):
                 self.turn_target = 0.0
 
     def update(self, dt, keys):
@@ -112,6 +112,8 @@ class Scene:
             move_input += 1.0
         if keys[pygame.K_s]:
             move_input -= 1.0
+        if keys[pygame.K_w] and keys[pygame.K_SPACE]:
+            move_input += 2.0
         self.pos += self.forward * SPEED * dt * move_input
 
         # Update forward vector
